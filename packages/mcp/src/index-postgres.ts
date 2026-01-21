@@ -151,6 +151,34 @@ class ContextMcpServer {
                         },
                         required: ["path"]
                     }
+                },
+                {
+                    name: "clear_index",
+                    description: "Clear the search index for a specific codebase",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            path: {
+                                type: "string",
+                                description: "Path to the codebase directory"
+                            }
+                        },
+                        required: ["path"]
+                    }
+                },
+                {
+                    name: "get_indexing_status",
+                    description: "Get the current indexing status of a codebase",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            path: {
+                                type: "string",
+                                description: "Path to the codebase directory"
+                            }
+                        },
+                        required: ["path"]
+                    }
                 }
             ]
         }));
@@ -168,6 +196,10 @@ class ContextMcpServer {
                     return await this.toolHandlers.handleSearchCode({ ...args, path: args?.path || null });
                 case "reindex_codebase":
                     return await this.toolHandlers.handleReindexCodebase(args);
+                case "clear_index":
+                    return await this.toolHandlers.handleClearIndex(args);
+                case "get_indexing_status":
+                    return await this.toolHandlers.handleGetIndexingStatus(args);
                 default:
                     throw new Error(`Unknown tool: ${name}`);
             }

@@ -554,7 +554,7 @@ export class Context {
         // We look for chunks where the startLine or endLine is close to the result's range
         // For simplicity, we broaden the range by a significant margin (e.g., 50 lines)
         const margin = 50;
-        const filter = `relativePath == "${result.relativePath.replace(/\\/g, '\\\\')}" AND startLine >= ${result.startLine - margin} AND endLine <= ${result.endLine + margin}`;
+        const filter = `relativePath == '${result.relativePath.replace(/\\/g, '\\\\')}' AND startLine >= ${result.startLine - margin} AND endLine <= ${result.endLine + margin}`;
 
         const adjacentChunks = await this.vectorDatabase.query(
             collectionName,
