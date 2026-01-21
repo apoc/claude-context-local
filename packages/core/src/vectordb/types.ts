@@ -7,6 +7,7 @@ export interface VectorDocument {
     startLine: number;
     endLine: number;
     fileExtension: string;
+    isDefinition?: boolean;
     metadata: Record<string, any>;
 }
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // Test script for PostgreSQL vector database implementation
-const { PostgresVectorDatabase } = require('./packages/core/dist/vectordb/postgres-vectordb.js');
-const { OllamaEmbedding } = require('./packages/core/dist/embedding/ollama-embedding.js');
+import { PostgresVectorDatabase } from './packages/core/dist/vectordb/postgres-vectordb.js';
+import { OllamaEmbedding } from './packages/core/dist/embedding/ollama-embedding.js';
 
 async function testPostgresIntegration() {
     console.log('🧪 Testing PostgreSQL Vector Database Integration\n');

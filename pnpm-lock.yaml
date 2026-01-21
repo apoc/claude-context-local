@@ -185,6 +185,9 @@ importers:
       tree-sitter-cpp:
         specifier: ^0.22.0
         version: 0.22.3(tree-sitter@0.21.1)
+      tree-sitter-dart:
+        specifier: ^1.0.0
+        version: 1.0.0
       tree-sitter-go:
         specifier: ^0.21.0
         version: 0.21.2(tree-sitter@0.21.1)
@@ -235,8 +238,8 @@ importers:
   packages/mcp:
     dependencies:
       '@mikeo-ai/claude-context-local-core':
-        specifier: workspace:*
-        version: link:../core
+        specifier: ^0.1.1
+        version: 0.1.1(@langchain/core@0.3.57(openai@5.1.1(ws@8.18.3)(zod@3.25.55)))(@modelcontextprotocol/sdk@1.12.1)(cheerio@1.0.0)(ws@8.18.3)(zod@3.25.55)
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.1
         version: 1.12.1
@@ -907,6 +910,9 @@ packages:
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': '>=0.2.21 <0.4.0'
+
+  '@mikeo-ai/claude-context-local-core@0.1.1':
+    resolution: {integrity: sha512-z6vcJnGXdTl4fGUKcdzZuqeUX6DH8PjgnMbfDWdh0Xg/6JS1R0QouQMZFuqM/KPS7aGzna8Z7tw8Wgc0leSu0g==}
 
   '@modelcontextprotocol/sdk@1.12.1':
     resolution: {integrity: sha512-KG1CZhZfWg+u8pxeM/mByJDScJSrjjxLc8fwQqbsS8xCjBmQfMNEBTotYdNanKekepnfRI85GtgQlctLFpcYPw==}
@@ -3161,6 +3167,9 @@ packages:
   mute-stream@0.0.8:
     resolution: {integrity: sha512-nnbWWOkoWyUsTjKrhgD0dcz22mdkSnpYqbEjIm2nhwhuxlSkpywJmBo8h0ZqJdkp73mb90SssHkN4rsRaBAfAA==}
 
+  nan@2.24.0:
+    resolution: {integrity: sha512-Vpf9qnVW1RaDkoNKFUvfxqAbtI8ncb8OJlqZ9wwpXzWPEsvsB1nvdUi6oYrHIkQ1Y/tMDnr1h4nczS0VB9Xykg==}
+
   napi-build-utils@2.0.0:
     resolution: {integrity: sha512-GEbrYkbfF7MoNaoh2iGG84Mnf/WZfB0GdGEsM8wz7Expx/LlWf5U8t9nvJKXSp3qr5IsEbK04cBGhol/KwOsWA==}
 
@@ -4028,6 +4037,9 @@ packages:
     peerDependenciesMeta:
       tree_sitter:
         optional: true
+
+  tree-sitter-dart@1.0.0:
+    resolution: {integrity: sha512-Ve5YMPJjjGW9LEsO+MngAOibQsw5obFp+bUT41pvwdcXWRwJImOWs3eaPi6AubEiBmc09qvhdvxeIXvxlhMnug==}
 
   tree-sitter-go@0.21.2:
     resolution: {integrity: sha512-aMFwjsB948nWhURiIxExK8QX29JYKs96P/IfXVvluVMRJZpL04SREHsdOZHYqJr1whkb7zr3/gWHqqvlkczmvw==}
@@ -5168,6 +5180,59 @@ snapshots:
     dependencies:
       '@langchain/core': 0.3.57(openai@5.1.1(ws@8.18.3)(zod@3.25.55))
       js-tiktoken: 1.0.20
+
+  '@mikeo-ai/claude-context-local-core@0.1.1(@langchain/core@0.3.57(openai@5.1.1(ws@8.18.3)(zod@3.25.55)))(@modelcontextprotocol/sdk@1.12.1)(cheerio@1.0.0)(ws@8.18.3)(zod@3.25.55)':
+    dependencies:
+      '@google/genai': 1.9.0(@modelcontextprotocol/sdk@1.12.1)
+      '@types/pg': 8.15.5
+      '@zilliz/milvus2-sdk-node': 2.5.10
+      faiss-node: 0.5.1
+      fs-extra: 11.3.0
+      glob: 10.4.5
+      langchain: 0.3.27(@langchain/core@0.3.57(openai@5.1.1(ws@8.18.3)(zod@3.25.55)))(cheerio@1.0.0)(openai@5.1.1(ws@8.18.3)(zod@3.25.55))(ws@8.18.3)
+      ollama: 0.5.16
+      openai: 5.1.1(ws@8.18.3)(zod@3.25.55)
+      pg: 8.16.3
+      tree-sitter: 0.21.1
+      tree-sitter-c-sharp: 0.21.3(tree-sitter@0.21.1)
+      tree-sitter-cpp: 0.22.3(tree-sitter@0.21.1)
+      tree-sitter-go: 0.21.2(tree-sitter@0.21.1)
+      tree-sitter-java: 0.21.0(tree-sitter@0.21.1)
+      tree-sitter-javascript: 0.21.4(tree-sitter@0.21.1)
+      tree-sitter-python: 0.21.0(tree-sitter@0.21.1)
+      tree-sitter-rust: 0.21.0(tree-sitter@0.21.1)
+      tree-sitter-scala: 0.24.0(tree-sitter@0.21.1)
+      tree-sitter-typescript: 0.21.2(tree-sitter@0.21.1)
+      typescript: 5.8.3
+      voyageai: 0.0.4
+    transitivePeerDependencies:
+      - '@langchain/anthropic'
+      - '@langchain/aws'
+      - '@langchain/cerebras'
+      - '@langchain/cohere'
+      - '@langchain/core'
+      - '@langchain/deepseek'
+      - '@langchain/google-genai'
+      - '@langchain/google-vertexai'
+      - '@langchain/google-vertexai-web'
+      - '@langchain/groq'
+      - '@langchain/mistralai'
+      - '@langchain/ollama'
+      - '@langchain/xai'
+      - '@modelcontextprotocol/sdk'
+      - axios
+      - bufferutil
+      - cheerio
+      - encoding
+      - handlebars
+      - peggy
+      - pg-native
+      - supports-color
+      - tree_sitter
+      - typeorm
+      - utf-8-validate
+      - ws
+      - zod
 
   '@modelcontextprotocol/sdk@1.12.1':
     dependencies:
@@ -7843,6 +7908,8 @@ snapshots:
 
   mute-stream@0.0.8: {}
 
+  nan@2.24.0: {}
+
   napi-build-utils@2.0.0: {}
 
   napi-postinstall@0.2.4: {}
@@ -8736,6 +8803,10 @@ snapshots:
       node-addon-api: 8.4.0
       node-gyp-build: 4.8.4
       tree-sitter: 0.21.1
+
+  tree-sitter-dart@1.0.0:
+    dependencies:
+      nan: 2.24.0
 
   tree-sitter-go@0.21.2(tree-sitter@0.21.1):
     dependencies:

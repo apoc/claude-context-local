@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+// --- MCP LOGGING FIX ---
+// Redirect console.log to console.error to keep stdout clean for JSON-RPC
+const originalLog = console.log;
+console.log = (...args) => console.error(...args);
+// -----------------------
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -62,6 +68,9 @@ class ContextMcpServer {
         this.syncManager = new SyncManager(this.context, this.snapshotManager);
         this.toolHandlers = new ToolHandlers(this.context, this.snapshotManager);
 
+        // Load existing codebase snapshot on startup
+        this.snapshotManager.loadCodebaseSnapshot();
+
         this.setupHandlers();
     }
 
@@ -77,13 +86,33 @@ class ContextMcpServer {
                             path: {
                                 type: "string",
                                 description: "Path to the codebase directory"
+                            },
+                            force: {
+                                type: "boolean",
+                                description: "Force re-indexing even if already indexed",
+                                default: false
+                            },
+                            splitter: {
+                                type: "string",
+                                description: "Splitter type to use ('ast' or 'langchain')",
+                                default: "ast"
+                            },
+                            customExtensions: {
+                                type: "array",
+                                items: { type: "string" },
+                                description: "Additional file extensions to index"
+                            },
+                            ignorePatterns: {
+                                type: "array",
+                                items: { type: "string" },
+                                description: "Additional ignore patterns"
                             }
                         },
                         required: ["path"]
                     }
                 },
                 {
-                    name: "search_codebase", 
+                    name: "search_codebase",
                     description: "Search through indexed codebases",
                     inputSchema: {
                         type: "object",
@@ -92,12 +121,35 @@ class ContextMcpServer {
                                 type: "string",
                                 description: "Search query"
                             },
+                            path: {
+                                type: "string",
+                                description: "Optional path to specific codebase directory. If not provided, searches all indexed codebases."
+                            },
                             limit: {
                                 type: "number",
                                 description: "Maximum number of results"
+                            },
+                            extensionFilter: {
+                                type: "array",
+                                items: { type: "string" },
+                                description: "Optional list of file extensions to filter results (e.g., ['.ts', '.py'])"
                             }
                         },
                         required: ["query"]
+                    }
+                },
+                {
+                    name: "reindex_codebase",
+                    description: "Re-index an already indexed codebase",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            path: {
+                                type: "string",
+                                description: "Path to the codebase directory"
+                            }
+                        },
+                        required: ["path"]
                     }
                 }
             ]
@@ -108,9 +160,14 @@ class ContextMcpServer {
 
             switch (name) {
                 case "add_codebase":
-                    return await this.toolHandlers.handleIndexCodebase({ ...args, force: false });
+                    return await this.toolHandlers.handleIndexCodebase({
+                        ...args,
+                        force: args?.force === true
+                    });
                 case "search_codebase":
-                    return await this.toolHandlers.handleSearchCode({ ...args, path: args?.path || '.' });
+                    return await this.toolHandlers.handleSearchCode({ ...args, path: args?.path || null });
+                case "reindex_codebase":
+                    return await this.toolHandlers.handleReindexCodebase(args);
                 default:
                     throw new Error(`Unknown tool: ${name}`);
             }
@@ -127,7 +184,7 @@ class ContextMcpServer {
 async function main(): Promise<void> {
     const config = createMcpConfig();
     logConfigurationSummary(config);
-    
+
     const server = new ContextMcpServer(config);
     await server.run();
 }

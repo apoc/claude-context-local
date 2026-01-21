@@ -79,9 +79,9 @@ export class SyncManager {
                     console.error(`[SYNC-DEBUG] Error syncing codebase '${codebasePath}' after ${codebaseElapsed}ms:`, error);
                     console.error(`[SYNC-DEBUG] Error stack:`, error.stack);
 
-                    if (error.message.includes('Failed to query Milvus')) {
-                        // Collection maybe deleted manually, delete the snapshot file
-                        await FileSynchronizer.deleteSnapshot(codebasePath);
+                    if (error.message.includes('Failed to query database') || error.message.includes('Connection error')) {
+                        // Potential database issue
+                        console.error(`[SYNC-DEBUG] Database error detected for '${codebasePath}'`);
                     }
 
                     // Log additional error details
@@ -122,8 +122,8 @@ export class SyncManager {
                 await this.handleSyncIndex();
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                if (errorMessage.includes('Failed to query collection')) {
-                    console.log('[SYNC-DEBUG] Collection not yet established, this is expected for new cluster users. Will retry on next sync cycle.');
+                if (errorMessage.includes('Failed to query collection') || errorMessage.includes('relation does not exist')) {
+                    console.log('[SYNC-DEBUG] Collection or table not yet established. This is expected for new users. Will retry on next sync cycle.');
                 } else {
                     console.error('[SYNC-DEBUG] Initial sync failed with unexpected error:', error);
                     throw error;

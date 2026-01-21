@@ -84,6 +84,7 @@ export class PostgresVectorDatabase implements VectorDatabase {
                 start_line INTEGER,
                 end_line INTEGER,
                 file_extension TEXT,
+                is_definition BOOLEAN DEFAULT FALSE,
                 metadata JSONB,
                 created_at TIMESTAMP DEFAULT NOW()
             )
@@ -99,6 +100,15 @@ export class PostgresVectorDatabase implements VectorDatabase {
         `;
 
         await this.client!.query(createIndexQuery);
+
+        // Create GIN index for full-text search
+        const createFtsIndexQuery = `
+            CREATE INDEX IF NOT EXISTS ${tableName}_content_fts_idx
+            ON ${tableName}
+            USING GIN (to_tsvector('english', content))
+        `;
+
+        await this.client!.query(createFtsIndexQuery);
 
         // Store collection metadata
         await this.client!.query(
@@ -157,7 +167,7 @@ export class PostgresVectorDatabase implements VectorDatabase {
 
         for (const doc of documents) {
             const vectorStr = '[' + doc.vector.join(',') + ']';
-            placeholders.push(`($${paramIndex}, $${paramIndex+1}, $${paramIndex+2}, $${paramIndex+3}, $${paramIndex+4}, $${paramIndex+5}, $${paramIndex+6}, $${paramIndex+7})`);
+            placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6}, $${paramIndex + 7}, $${paramIndex + 8})`);
 
             values.push(
                 doc.id,
@@ -167,14 +177,15 @@ export class PostgresVectorDatabase implements VectorDatabase {
                 doc.startLine,
                 doc.endLine,
                 doc.fileExtension,
+                doc.isDefinition || false,
                 JSON.stringify(doc.metadata || {})
             );
 
-            paramIndex += 8;
+            paramIndex += 9;
         }
 
         const insertQuery = `
-            INSERT INTO ${tableName} (id, vector, content, relative_path, start_line, end_line, file_extension, metadata)
+            INSERT INTO ${tableName} (id, vector, content, relative_path, start_line, end_line, file_extension, is_definition, metadata)
             VALUES ${placeholders.join(', ')}
             ON CONFLICT (id) DO UPDATE SET
                 vector = EXCLUDED.vector,
@@ -183,6 +194,7 @@ export class PostgresVectorDatabase implements VectorDatabase {
                 start_line = EXCLUDED.start_line,
                 end_line = EXCLUDED.end_line,
                 file_extension = EXCLUDED.file_extension,
+                is_definition = EXCLUDED.is_definition,
                 metadata = EXCLUDED.metadata
         `;
 
@@ -215,6 +227,7 @@ export class PostgresVectorDatabase implements VectorDatabase {
                 start_line,
                 end_line,
                 file_extension,
+                is_definition,
                 metadata,
                 1 - (vector <=> $1::vector) as similarity
             FROM ${tableName}
@@ -241,6 +254,7 @@ export class PostgresVectorDatabase implements VectorDatabase {
                 startLine: row.start_line,
                 endLine: row.end_line,
                 fileExtension: row.file_extension,
+                isDefinition: row.is_definition,
                 metadata: row.metadata || {}
             },
             score: row.similarity
@@ -248,17 +262,99 @@ export class PostgresVectorDatabase implements VectorDatabase {
     }
 
     async hybridSearch(collectionName: string, searchRequests: HybridSearchRequest[], options?: HybridSearchOptions): Promise<HybridSearchResult[]> {
-        // Simplified hybrid search implementation
-        const denseRequest = searchRequests.find(req => req.anns_field === 'vector');
+        await this.ensureInitialized();
 
-        if (denseRequest && Array.isArray(denseRequest.data)) {
-            return this.search(collectionName, denseRequest.data as number[], {
-                topK: options?.limit || 10,
-                filterExpr: options?.filterExpr
-            });
+        const tableName = this.sanitizeTableName(collectionName);
+        const topK = options?.limit || 10;
+        const filterExpr = options?.filterExpr ? this.parseFilterExpression(options.filterExpr) : '1=1';
+
+        // Find dense and sparse requests
+        const denseRequest = searchRequests.find(req => req.anns_field === 'vector');
+        const sparseRequest = searchRequests.find(req => req.anns_field === 'sparse_vector');
+
+        if (!denseRequest) {
+            throw new Error('Hybrid search requires at least a dense vector request');
         }
 
-        return [];
+        const queryVectorStr = `[${(denseRequest.data as number[]).join(',')}]`;
+        const queryText = (sparseRequest?.data as string) || '';
+
+        /**
+         * Hybrid search logic:
+         * 1. Vector similarity search (Cosine similarity)
+         * 2. Full-text search (TS Rank)
+         * 3. Definition boosting (Bonus points for is_definition = true)
+         * 4. Merge results using a simple weighted combination
+         */
+
+        let hybridQuery = `
+            WITH vector_results AS (
+                SELECT 
+                    id, 
+                    (1 - (vector <=> $1::vector)) as vector_score
+                FROM ${tableName}
+                WHERE ${filterExpr}
+                ORDER BY vector <=> $1::vector
+                LIMIT $2
+            )`;
+
+        if (queryText) {
+            hybridQuery += `,
+            fts_results AS (
+                SELECT 
+                    id, 
+                    ts_rank_cd(to_tsvector('english', content), plainto_tsquery('english', $3)) as fts_score
+                FROM ${tableName}
+                WHERE ${filterExpr} AND to_tsvector('english', content) @@ plainto_tsquery('english', $3)
+                ORDER BY fts_score DESC
+                LIMIT $2
+            )
+            SELECT 
+                t.*,
+                COALESCE(v.vector_score, 0) as v_score,
+                COALESCE(f.fts_score, 0) as f_score,
+                (COALESCE(v.vector_score, 0) * 0.7 + COALESCE(f.fts_score, 0) * 0.3 + (CASE WHEN t.is_definition THEN 0.1 ELSE 0 END)) as final_score
+            FROM ${tableName} t
+            LEFT JOIN vector_results v ON t.id = v.id
+            LEFT JOIN fts_results f ON t.id = f.id
+            WHERE v.id IS NOT NULL OR f.id IS NOT NULL
+            ORDER BY final_score DESC
+            LIMIT $2`;
+        } else {
+            hybridQuery += `
+            SELECT 
+                t.*,
+                v.vector_score as v_score,
+                0 as f_score,
+                (v.vector_score + (CASE WHEN t.is_definition THEN 0.1 ELSE 0 END)) as final_score
+            FROM ${tableName} t
+            INNER JOIN vector_results v ON t.id = v.id
+            ORDER BY final_score DESC
+            LIMIT $2`;
+        }
+
+        const params = queryText ? [queryVectorStr, topK, queryText] : [queryVectorStr, topK];
+
+        // Debug logging
+        // console.log('[PostgresDB] Hybrid Query:', hybridQuery);
+        // console.log('[PostgresDB] Hybrid Params:', params[1], params[2] || '');
+
+        const result = await this.client!.query(hybridQuery, params);
+
+        return result.rows.map(row => ({
+            document: {
+                id: row.id,
+                vector: [],
+                content: row.content,
+                relativePath: row.relative_path,
+                startLine: row.start_line,
+                endLine: row.end_line,
+                fileExtension: row.file_extension,
+                isDefinition: row.is_definition,
+                metadata: row.metadata || {}
+            },
+            score: row.final_score
+        }));
     }
 
     async delete(collectionName: string, ids: string[]): Promise<void> {
@@ -315,12 +411,14 @@ export class PostgresVectorDatabase implements VectorDatabase {
     }
 
     private parseFilterExpression(filter: string): string {
-        // Simple filter parser - basic SQL injection prevention
+        // Simple filter parser - basic SQL compatibility and injection prevention
         let parsed = filter
             .replace(/relativePath/g, 'relative_path')
             .replace(/startLine/g, 'start_line')
             .replace(/endLine/g, 'end_line')
-            .replace(/fileExtension/g, 'file_extension');
+            .replace(/fileExtension/g, 'file_extension')
+            .replace(/ == /g, ' = ')
+            .replace(/ in \[([^\]]+)\]/g, (match, p1) => ` IN (${p1})`);
 
         // Basic SQL injection prevention
         parsed = parsed.replace(/;/g, '');

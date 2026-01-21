@@ -46,7 +46,7 @@ async function checkPgVector() {
     const client = new Client({
       host: process.env.POSTGRES_HOST || 'localhost',
       port: process.env.POSTGRES_PORT || 5432,
-      database: 'postgres',
+      database: 'embeddings',
       user: process.env.POSTGRES_USER || 'postgres',
       password: process.env.POSTGRES_PASSWORD || 'postgres'
     });
@@ -178,7 +178,7 @@ async function runValidation() {
 
   const allPassed = Object.values(CHECKS).every(v => v);
   const criticalPassed = CHECKS.postgresql && CHECKS.database &&
-                         CHECKS.ollama && CHECKS.ollamaModel && CHECKS.mcpBuild;
+    CHECKS.ollama && CHECKS.ollamaModel && CHECKS.mcpBuild;
 
   if (allPassed) {
     console.log('🎉 All checks passed! Your setup is ready.');

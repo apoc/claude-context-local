@@ -2,6 +2,7 @@
     "name": "claude-context-local",
     "version": "0.1.0",
     "description": "Local-first codebase context provider for Claude using PostgreSQL and Ollama",
+    "type": "module",
     "private": true,
     "scripts": {
         "build": "pnpm -r --filter='!./examples/*' build && pnpm -r --filter='./examples/*' build",

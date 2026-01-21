@@ -18,128 +18,6 @@ export class ToolHandlers {
         console.log(`[WORKSPACE] Current workspace: ${this.currentWorkspace}`);
     }
 
-    /**
-     * Sync indexed codebases from Zilliz Cloud collections
-     * This method fetches all collections from the vector database,
-     * gets the first document from each collection to extract codebasePath from metadata,
-     * and updates the snapshot with discovered codebases.
-     * 
-     * Logic: Compare mcp-codebase-snapshot.json with zilliz cloud collections
-     * - If local snapshot has extra directories (not in cloud), remove them
-     * - If local snapshot is missing directories (exist in cloud), ignore them
-     */
-    private async syncIndexedCodebasesFromCloud(): Promise<void> {
-        try {
-            console.log(`[SYNC-CLOUD] 🔄 Syncing indexed codebases from Zilliz Cloud...`);
-
-            // Get all collections using the interface method
-            const vectorDb = this.context.getVectorDatabase();
-
-            // Use the new listCollections method from the interface
-            const collections = await vectorDb.listCollections();
-
-            console.log(`[SYNC-CLOUD] 📋 Found ${collections.length} collections in Zilliz Cloud`);
-
-            if (collections.length === 0) {
-                console.log(`[SYNC-CLOUD] ✅ No collections found in cloud`);
-                // If no collections in cloud, remove all local codebases
-                const localCodebases = this.snapshotManager.getIndexedCodebases();
-                if (localCodebases.length > 0) {
-                    console.log(`[SYNC-CLOUD] 🧹 Removing ${localCodebases.length} local codebases as cloud has no collections`);
-                    for (const codebasePath of localCodebases) {
-                        this.snapshotManager.removeIndexedCodebase(codebasePath);
-                        console.log(`[SYNC-CLOUD] ➖ Removed local codebase: ${codebasePath}`);
-                    }
-                    this.snapshotManager.saveCodebaseSnapshot();
-                    console.log(`[SYNC-CLOUD] 💾 Updated snapshot to match empty cloud state`);
-                }
-                return;
-            }
-
-            const cloudCodebases = new Set<string>();
-
-            // Check each collection for codebase path
-            for (const collectionName of collections) {
-                try {
-                    // Skip collections that don't match the code_chunks pattern (support both legacy and new collections)
-                    if (!collectionName.startsWith('code_chunks_') && !collectionName.startsWith('hybrid_code_chunks_')) {
-                        console.log(`[SYNC-CLOUD] ⏭️  Skipping non-code collection: ${collectionName}`);
-                        continue;
-                    }
-
-                    console.log(`[SYNC-CLOUD] 🔍 Checking collection: ${collectionName}`);
-
-                    // Query the first document to get metadata
-                    const results = await vectorDb.query(
-                        collectionName,
-                        '', // Empty filter to get all results
-                        ['metadata'], // Only fetch metadata field
-                        1 // Only need one result to extract codebasePath
-                    );
-
-                    if (results && results.length > 0) {
-                        const firstResult = results[0];
-                        const metadataStr = firstResult.metadata;
-
-                        if (metadataStr) {
-                            try {
-                                const metadata = JSON.parse(metadataStr);
-                                const codebasePath = metadata.codebasePath;
-
-                                if (codebasePath && typeof codebasePath === 'string') {
-                                    console.log(`[SYNC-CLOUD] 📍 Found codebase path: ${codebasePath} in collection: ${collectionName}`);
-                                    cloudCodebases.add(codebasePath);
-                                } else {
-                                    console.warn(`[SYNC-CLOUD] ⚠️  No codebasePath found in metadata for collection: ${collectionName}`);
-                                }
-                            } catch (parseError) {
-                                console.warn(`[SYNC-CLOUD] ⚠️  Failed to parse metadata JSON for collection ${collectionName}:`, parseError);
-                            }
-                        } else {
-                            console.warn(`[SYNC-CLOUD] ⚠️  No metadata found in collection: ${collectionName}`);
-                        }
-                    } else {
-                        console.log(`[SYNC-CLOUD] ℹ️  Collection ${collectionName} is empty`);
-                    }
-                } catch (collectionError: any) {
-                    console.warn(`[SYNC-CLOUD] ⚠️  Error checking collection ${collectionName}:`, collectionError.message || collectionError);
-                    // Continue with next collection
-                }
-            }
-
-            console.log(`[SYNC-CLOUD] 📊 Found ${cloudCodebases.size} valid codebases in cloud`);
-
-            // Get current local codebases
-            const localCodebases = new Set(this.snapshotManager.getIndexedCodebases());
-            console.log(`[SYNC-CLOUD] 📊 Found ${localCodebases.size} local codebases in snapshot`);
-
-            let hasChanges = false;
-
-            // Remove local codebases that don't exist in cloud
-            for (const localCodebase of localCodebases) {
-                if (!cloudCodebases.has(localCodebase)) {
-                    this.snapshotManager.removeIndexedCodebase(localCodebase);
-                    hasChanges = true;
-                    console.log(`[SYNC-CLOUD] ➖ Removed local codebase (not in cloud): ${localCodebase}`);
-                }
-            }
-
-            // Note: We don't add cloud codebases that are missing locally (as per user requirement)
-            console.log(`[SYNC-CLOUD] ℹ️  Skipping addition of cloud codebases not present locally (per sync policy)`);
-
-            if (hasChanges) {
-                this.snapshotManager.saveCodebaseSnapshot();
-                console.log(`[SYNC-CLOUD] 💾 Updated snapshot to match cloud state`);
-            } else {
-                console.log(`[SYNC-CLOUD] ✅ Local snapshot already matches cloud state`);
-            }
-
-            console.log(`[SYNC-CLOUD] ✅ Cloud sync completed successfully`);
-        } catch (error: any) {
-            console.error(`[SYNC-CLOUD] ❌ Error syncing codebases from cloud:`, error.message || error);
-            // Don't throw - this is not critical for the main functionality
-        }
-    }
 
     public async handleIndexCodebase(args: any) {
         const { path: codebasePath, force, splitter, customExtensions, ignorePatterns } = args;
@@ -149,8 +27,7 @@ export class ToolHandlers {
         const customIgnorePatterns = ignorePatterns || [];
 
         try {
-            // Sync indexed codebases from cloud first
-            await this.syncIndexedCodebasesFromCloud();
+
 
             // Validate splitter parameter
             if (splitterType !== 'ast' && splitterType !== 'langchain') {
@@ -199,10 +76,6 @@ export class ToolHandlers {
                 };
             }
 
-            //Check if the snapshot and cloud index are in sync
-            if (this.snapshotManager.getIndexedCodebases().includes(absolutePath) !== await this.context.hasIndex(absolutePath)) {
-                console.warn(`[INDEX-VALIDATION] ❌ Snapshot and cloud index mismatch: ${absolutePath}`);
-            }
 
             // Check if already indexed (unless force is true)
             if (!forceReindex && this.snapshotManager.getIndexedCodebases().includes(absolutePath)) {
@@ -411,13 +284,42 @@ export class ToolHandlers {
         }
     }
 
+    public async handleReindexCodebase(args: any) {
+        return await this.handleIndexCodebase({
+            ...args,
+            force: true
+        });
+    }
+
     public async handleSearchCode(args: any) {
         const { path: codebasePath, query, limit = 10, extensionFilter } = args;
         const resultLimit = limit || 10;
 
         try {
-            // Sync indexed codebases from cloud first
-            await this.syncIndexedCodebasesFromCloud();
+
+
+            // Build filter expression from extensionFilter list
+            let filterExpr: string | undefined = undefined;
+            if (Array.isArray(extensionFilter) && extensionFilter.length > 0) {
+                const cleaned = extensionFilter
+                    .filter((v: any) => typeof v === 'string')
+                    .map((v: string) => v.trim())
+                    .filter((v: string) => v.length > 0);
+                const invalid = cleaned.filter((e: string) => !(e.startsWith('.') && e.length > 1 && !/\s/.test(e)));
+                if (invalid.length > 0) {
+                    return {
+                        content: [{ type: 'text', text: `Error: Invalid file extensions in extensionFilter: ${JSON.stringify(invalid)}. Use proper extensions like '.ts', '.py'.` }],
+                        isError: true
+                    };
+                }
+                const quoted = cleaned.map((e: string) => `'${e}'`).join(', ');
+                filterExpr = `fileExtension in [${quoted}]`;
+            }
+
+            // If path is null or not provided, search all indexed codebases
+            if (codebasePath === null || codebasePath === undefined) {
+                return await this.searchAllCodebases(query, resultLimit, filterExpr);
+            }
 
             // Force absolute path resolution - warn if relative path provided
             const absolutePath = ensureAbsolutePath(codebasePath);
@@ -475,24 +377,6 @@ export class ToolHandlers {
             const embeddingProvider = this.context.getEmbedding();
             console.log(`[SEARCH] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} for search`);
             console.log(`[SEARCH] 🔍 Generating embeddings for query using ${embeddingProvider.getProvider()}...`);
-
-            // Build filter expression from extensionFilter list
-            let filterExpr: string | undefined = undefined;
-            if (Array.isArray(extensionFilter) && extensionFilter.length > 0) {
-                const cleaned = extensionFilter
-                    .filter((v: any) => typeof v === 'string')
-                    .map((v: string) => v.trim())
-                    .filter((v: string) => v.length > 0);
-                const invalid = cleaned.filter((e: string) => !(e.startsWith('.') && e.length > 1 && !/\s/.test(e)));
-                if (invalid.length > 0) {
-                    return {
-                        content: [{ type: 'text', text: `Error: Invalid file extensions in extensionFilter: ${JSON.stringify(invalid)}. Use proper extensions like '.ts', '.py'.` }],
-                        isError: true
-                    };
-                }
-                const quoted = cleaned.map((e: string) => `'${e}'`).join(', ');
-                filterExpr = `fileExtension in [${quoted}]`;
-            }
 
             // Search in the specified codebase
             const searchResults = await this.context.semanticSearch(
@@ -567,6 +451,123 @@ export class ToolHandlers {
             };
         }
     }
+
+    /**
+     * Search across all indexed codebases and aggregate results
+     */
+    private async searchAllCodebases(query: string, resultLimit: number, filterExpr?: string) {
+        const indexedCodebases = this.snapshotManager.getIndexedCodebases();
+        const indexingCodebases = this.snapshotManager.getIndexingCodebases();
+        const allCodebases = [...indexedCodebases, ...indexingCodebases];
+
+        if (allCodebases.length === 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `No codebases are currently indexed. Please index a codebase first using the add_codebase tool.`
+                }],
+                isError: true
+            };
+        }
+
+        console.log(`[SEARCH-ALL] Searching across ${allCodebases.length} codebases`);
+        console.log(`[SEARCH-ALL] Query: "${query}"`);
+
+        // Log embedding provider information
+        const embeddingProvider = this.context.getEmbedding();
+        console.log(`[SEARCH-ALL] 🧠 Using embedding provider: ${embeddingProvider.getProvider()} for search`);
+
+        // Search each codebase and collect results with scores
+        const allResults: Array<{
+            result: any;
+            codebasePath: string;
+            codebaseName: string;
+            score: number;
+            isIndexing: boolean;
+        }> = [];
+
+        let hasIndexingCodebase = false;
+
+        for (const codebasePath of allCodebases) {
+            try {
+                const isIndexing = indexingCodebases.includes(codebasePath);
+                if (isIndexing) {
+                    hasIndexingCodebase = true;
+                }
+
+                console.log(`[SEARCH-ALL] Searching in: ${codebasePath} (${isIndexing ? 'indexing' : 'indexed'})`);
+
+                const searchResults = await this.context.semanticSearch(
+                    codebasePath,
+                    query,
+                    Math.min(resultLimit * 2, 50), // Get more results per codebase for better ranking
+                    0.3,
+                    filterExpr
+                );
+
+                for (const result of searchResults) {
+                    allResults.push({
+                        result,
+                        codebasePath,
+                        codebaseName: path.basename(codebasePath),
+                        score: result.score || 0,
+                        isIndexing
+                    });
+                }
+
+                console.log(`[SEARCH-ALL] Found ${searchResults.length} results in ${path.basename(codebasePath)}`);
+            } catch (error: any) {
+                console.warn(`[SEARCH-ALL] ⚠️ Error searching ${codebasePath}: ${error.message || error}`);
+                // Continue with other codebases
+            }
+        }
+
+        console.log(`[SEARCH-ALL] ✅ Total results collected: ${allResults.length}`);
+
+        if (allResults.length === 0) {
+            let noResultsMessage = `No results found for query: "${query}" across ${allCodebases.length} indexed codebase(s)`;
+            if (hasIndexingCodebase) {
+                noResultsMessage += `\n\nNote: Some codebases are still being indexed. Try searching again after indexing completes.`;
+            }
+            return {
+                content: [{
+                    type: "text",
+                    text: noResultsMessage
+                }]
+            };
+        }
+
+        // Sort by score (highest first) and limit results
+        allResults.sort((a, b) => b.score - a.score);
+        const limitedResults = allResults.slice(0, resultLimit);
+
+        // Format results
+        const formattedResults = limitedResults.map((item, index) => {
+            const location = `${item.result.relativePath}:${item.result.startLine}-${item.result.endLine}`;
+            const context = truncateContent(item.result.content, 5000);
+            const indexingIndicator = item.isIndexing ? ' ⏳' : '';
+
+            return `${index + 1}. Code snippet (${item.result.language}) [${item.codebaseName}${indexingIndicator}]\n` +
+                `   Location: ${location}\n` +
+                `   Codebase: ${item.codebasePath}\n` +
+                `   Score: ${item.score.toFixed(4)}\n` +
+                `   Context: \n\`\`\`${item.result.language}\n${context}\n\`\`\`\n`;
+        }).join('\n');
+
+        let resultMessage = `Found ${limitedResults.length} results for query: "${query}" across ${allCodebases.length} codebase(s)\n\n${formattedResults}`;
+
+        if (hasIndexingCodebase) {
+            resultMessage += `\n\n💡 **Tip**: Some codebases are still being indexed (marked with ⏳). More results may become available as indexing progresses.`;
+        }
+
+        return {
+            content: [{
+                type: "text",
+                text: resultMessage
+            }]
+        };
+    }
+
 
     public async handleClearIndex(args: any) {
         const { path: codebasePath } = args;

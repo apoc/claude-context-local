@@ -221,6 +221,80 @@ This tool is versatile and can be used before completing various tasks to retrie
                             required: ["path"]
                         }
                     },
+                    // Alias tools for backward compatibility
+                    {
+                        name: "add_codebase",
+                        description: index_description,
+                        inputSchema: {
+                            type: "object",
+                            properties: {
+                                path: {
+                                    type: "string",
+                                    description: `ABSOLUTE path to the codebase directory to index.`
+                                },
+                                force: {
+                                    type: "boolean",
+                                    description: "Force re-indexing even if already indexed",
+                                    default: false
+                                },
+                                splitter: {
+                                    type: "string",
+                                    description: "Code splitter to use: 'ast' for syntax-aware splitting with automatic fallback, 'langchain' for character-based splitting",
+                                    enum: ["ast", "langchain"],
+                                    default: "ast"
+                                },
+                                customExtensions: {
+                                    type: "array",
+                                    items: {
+                                        type: "string"
+                                    },
+                                    description: "Optional: Additional file extensions to include beyond defaults (e.g., ['.vue', '.svelte', '.astro']). Extensions should include the dot prefix or will be automatically added",
+                                    default: []
+                                },
+                                ignorePatterns: {
+                                    type: "array",
+                                    items: {
+                                        type: "string"
+                                    },
+                                    description: "Optional: Additional ignore patterns to exclude specific files/directories beyond defaults. Only include this parameter if the user explicitly requests custom ignore patterns (e.g., ['static/**', '*.tmp', 'private/**'])",
+                                    default: []
+                                }
+                            },
+                            required: ["path"]
+                        }
+                    },
+                    {
+                        name: "search_codebase",
+                        description: search_description,
+                        inputSchema: {
+                            type: "object",
+                            properties: {
+                                path: {
+                                    type: "string",
+                                    description: `ABSOLUTE path to the codebase directory to search in.`
+                                },
+                                query: {
+                                    type: "string",
+                                    description: "Natural language query to search for in the codebase"
+                                },
+                                limit: {
+                                    type: "number",
+                                    description: "Maximum number of results to return",
+                                    default: 10,
+                                    maximum: 50
+                                },
+                                extensionFilter: {
+                                    type: "array",
+                                    items: {
+                                        type: "string"
+                                    },
+                                    description: "Optional: List of file extensions to filter results. (e.g., ['.ts','.py']).",
+                                    default: []
+                                }
+                            },
+                            required: ["path", "query"]
+                        }
+                    },
                 ]
             };
         });
@@ -231,8 +305,10 @@ This tool is versatile and can be used before completing various tasks to retrie
 
             switch (name) {
                 case "index_codebase":
+                case "add_codebase":
                     return await this.toolHandlers.handleIndexCodebase(args);
                 case "search_code":
+                case "search_codebase":
                     return await this.toolHandlers.handleSearchCode(args);
                 case "clear_index":
                     return await this.toolHandlers.handleClearIndex(args);

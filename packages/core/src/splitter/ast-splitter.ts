@@ -1,28 +1,44 @@
 import Parser from 'tree-sitter';
 import { Splitter, CodeChunk } from './index';
 
-// Language parsers
-const JavaScript = require('tree-sitter-javascript');
-const TypeScript = require('tree-sitter-typescript').typescript;
-const Python = require('tree-sitter-python');
-const Java = require('tree-sitter-java');
-const Cpp = require('tree-sitter-cpp');
-const Go = require('tree-sitter-go');
-const Rust = require('tree-sitter-rust');
-const CSharp = require('tree-sitter-c-sharp');
-const Scala = require('tree-sitter-scala');
+// Safe loader for tree-sitter parsers
+function safeRequire(moduleName: string): any {
+    try {
+        const mod = require(moduleName);
+        // Special case for tree-sitter-typescript which has sub-modules
+        if (moduleName.includes('typescript') && mod.typescript) {
+            return mod.typescript;
+        }
+        return mod;
+    } catch (error: any) {
+        console.warn(`[ASTSplitter] ⚠️  Failed to load ${moduleName}. AST splitting for this language will be disabled:`, error.message);
+        return null;
+    }
+}
+
+const JavaScript = safeRequire('tree-sitter-javascript');
+const TypeScript = safeRequire('tree-sitter-typescript');
+const Python = safeRequire('tree-sitter-python');
+const Java = safeRequire('tree-sitter-java');
+const Cpp = safeRequire('tree-sitter-cpp');
+const Go = safeRequire('tree-sitter-go');
+const Rust = safeRequire('tree-sitter-rust');
+const CSharp = safeRequire('tree-sitter-c-sharp');
+const Scala = safeRequire('tree-sitter-scala');
+const Dart = safeRequire('tree-sitter-dart');
 
 // Node types that represent logical code units
 const SPLITTABLE_NODE_TYPES = {
     javascript: ['function_declaration', 'arrow_function', 'class_declaration', 'method_definition', 'export_statement'],
     typescript: ['function_declaration', 'arrow_function', 'class_declaration', 'method_definition', 'export_statement', 'interface_declaration', 'type_alias_declaration'],
-    python: ['function_definition', 'class_definition', 'decorated_definition', 'async_function_definition'],
-    java: ['method_declaration', 'class_declaration', 'interface_declaration', 'constructor_declaration'],
-    cpp: ['function_definition', 'class_specifier', 'namespace_definition', 'declaration'],
-    go: ['function_declaration', 'method_declaration', 'type_declaration', 'var_declaration', 'const_declaration'],
-    rust: ['function_item', 'impl_item', 'struct_item', 'enum_item', 'trait_item', 'mod_item'],
-    csharp: ['method_declaration', 'class_declaration', 'interface_declaration', 'struct_declaration', 'enum_declaration'],
-    scala: ['method_declaration', 'class_declaration', 'interface_declaration', 'constructor_declaration']
+    python: ['function_definition', 'class_definition', 'decorated_definition', 'async_function_definition', 'module', 'expression_statement'],
+    java: ['method_declaration', 'class_declaration', 'interface_declaration', 'constructor_declaration', 'annotation_type_declaration'],
+    cpp: ['function_definition', 'class_specifier', 'namespace_definition', 'declaration', 'template_declaration'],
+    go: ['function_declaration', 'method_declaration', 'type_declaration', 'var_declaration', 'const_declaration', 'source_file'],
+    rust: ['function_item', 'impl_item', 'struct_item', 'enum_item', 'trait_item', 'mod_item', 'macro_definition', 'source_file'],
+    csharp: ['method_declaration', 'class_declaration', 'interface_declaration', 'struct_declaration', 'enum_declaration', 'delegate_declaration'],
+    scala: ['method_declaration', 'class_declaration', 'interface_declaration', 'constructor_declaration', 'object_definition', 'trait_definition'],
+    dart: ['class_definition', 'enum_declaration', 'mixin_declaration', 'extension_declaration', 'method_signature', 'function_signature', 'getter_signature', 'setter_signature', 'constructor_signature']
 };
 
 export class AstCodeSplitter implements Splitter {
@@ -100,7 +116,8 @@ export class AstCodeSplitter implements Splitter {
             'rs': { parser: Rust, nodeTypes: SPLITTABLE_NODE_TYPES.rust },
             'cs': { parser: CSharp, nodeTypes: SPLITTABLE_NODE_TYPES.csharp },
             'csharp': { parser: CSharp, nodeTypes: SPLITTABLE_NODE_TYPES.csharp },
-            'scala': { parser: Scala, nodeTypes: SPLITTABLE_NODE_TYPES.scala }
+            'scala': { parser: Scala, nodeTypes: SPLITTABLE_NODE_TYPES.scala },
+            'dart': { parser: Dart, nodeTypes: SPLITTABLE_NODE_TYPES.dart }
         };
 
         return langMap[language.toLowerCase()] || null;
@@ -125,6 +142,9 @@ export class AstCodeSplitter implements Splitter {
 
                 // Only create chunk if it has meaningful content
                 if (nodeText.trim().length > 0) {
+                    // Check if this node is likely a definition/declaration
+                    const isDefinition = this.isDefinitionNode(currentNode.type, language);
+
                     chunks.push({
                         content: nodeText,
                         metadata: {
@@ -132,6 +152,7 @@ export class AstCodeSplitter implements Splitter {
                             endLine,
                             language,
                             filePath,
+                            isDefinition
                         }
                     });
                 }
@@ -255,6 +276,27 @@ export class AstCodeSplitter implements Splitter {
 
     private getLineCount(text: string): number {
         return text.split('\n').length;
+    }
+
+    /**
+     * Check if a node type represents a definition/declaration in a given language
+     */
+    private isDefinitionNode(nodeType: string, language: string): boolean {
+        const definitionTypes: Record<string, string[]> = {
+            javascript: ['function_declaration', 'class_declaration', 'method_definition'],
+            typescript: ['function_declaration', 'class_declaration', 'method_definition', 'interface_declaration', 'type_alias_declaration'],
+            python: ['function_definition', 'class_definition', 'async_function_definition'],
+            java: ['method_declaration', 'class_declaration', 'interface_declaration', 'constructor_declaration'],
+            cpp: ['function_definition', 'class_specifier'],
+            go: ['function_declaration', 'method_declaration', 'type_declaration'],
+            rust: ['function_item', 'struct_item', 'enum_item', 'trait_item'],
+            csharp: ['method_declaration', 'class_declaration', 'interface_declaration', 'struct_declaration'],
+            scala: ['method_declaration', 'class_declaration', 'interface_declaration'],
+            dart: ['class_definition', 'enum_declaration', 'mixin_declaration', 'function_signature', 'method_signature']
+        };
+
+        const types = definitionTypes[language.toLowerCase()];
+        return types ? types.includes(nodeType) : false;
     }
 
     /**

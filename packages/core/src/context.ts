@@ -27,6 +27,7 @@ const DEFAULT_SUPPORTED_EXTENSIONS = [
     // Programming languages
     '.ts', '.tsx', '.js', '.jsx', '.py', '.java', '.cpp', '.c', '.h', '.hpp',
     '.cs', '.go', '.rs', '.php', '.rb', '.swift', '.kt', '.scala', '.m', '.mm',
+    '.dart', '.gradle', '.kts',
     // Text and markup files
     '.md', '.markdown', '.ipynb',
     // '.txt',  '.json', '.yaml', '.yml', '.xml', '.html', '.htm',
@@ -382,11 +383,11 @@ export class Context {
     }
 
     private async deleteFileChunks(collectionName: string, relativePath: string): Promise<void> {
-        // Escape backslashes for Milvus query expression (Windows path compatibility)
+        // Escape backslashes for Windows path compatibility
         const escapedPath = relativePath.replace(/\\/g, '\\\\');
         const results = await this.vectorDatabase.query(
             collectionName,
-            `relativePath == "${escapedPath}"`,
+            `relativePath = "${escapedPath}"`,
             ['id']
         );
 
@@ -487,7 +488,8 @@ export class Context {
                 console.log(`[Context] 🔍 Top result score: ${results[0].score}, path: ${results[0].relativePath}`);
             }
 
-            return results;
+            // 5. Expand results with more context (Envelope Retrieval)
+            return await this.expandResultsWithContext(collectionName, results);
         } else {
             // Regular semantic search
             // 1. Generate query vector
@@ -511,8 +513,74 @@ export class Context {
             }));
 
             console.log(`[Context] ✅ Found ${results.length} relevant results`);
-            return results;
+
+            // 4. Expand results with more context (Envelope Retrieval)
+            return await this.expandResultsWithContext(collectionName, results);
         }
+    }
+
+    /**
+     * Expand search results by fetching adjacent chunks from the same file
+     */
+    private async expandResultsWithContext(collectionName: string, results: SemanticSearchResult[]): Promise<SemanticSearchResult[]> {
+        if (results.length === 0) return results;
+
+        const expandedResults: SemanticSearchResult[] = [];
+
+        for (const result of results) {
+            try {
+                // Fetch chunks from the same file that are close to the current chunk
+                // We fetch 1 chunk above and 1 chunk below for a total of 3 potential chunks
+                const expandedContent = await this.getExpandedContent(collectionName, result);
+
+                expandedResults.push({
+                    ...result,
+                    content: expandedContent
+                });
+            } catch (error) {
+                console.warn(`[Context] ⚠️ Failed to expand context for ${result.relativePath}:`, error);
+                expandedResults.push(result);
+            }
+        }
+
+        return expandedResults;
+    }
+
+    /**
+     * Get expanded content for a single result
+     */
+    private async getExpandedContent(collectionName: string, result: SemanticSearchResult): Promise<string> {
+        // Find adjacent chunks in the same file
+        // We look for chunks where the startLine or endLine is close to the result's range
+        // For simplicity, we broaden the range by a significant margin (e.g., 50 lines)
+        const margin = 50;
+        const filter = `relativePath == "${result.relativePath.replace(/\\/g, '\\\\')}" AND startLine >= ${result.startLine - margin} AND endLine <= ${result.endLine + margin}`;
+
+        const adjacentChunks = await this.vectorDatabase.query(
+            collectionName,
+            filter,
+            ['content', 'startLine', 'endLine'],
+            5 // Max 5 chunks to avoid massive snippets
+        );
+
+        if (adjacentChunks.length <= 1) return result.content;
+
+        // Sort by start line to ensure logical order
+        adjacentChunks.sort((a, b) => a.startLine - b.startLine);
+
+        // Merge contents
+        let mergedContent = '';
+        let lastEndLine = -1;
+
+        for (const chunk of adjacentChunks) {
+            if (lastEndLine !== -1 && chunk.startLine > lastEndLine + 1) {
+                mergedContent += '\n// ...\n';
+            }
+            mergedContent += chunk.content + '\n';
+            lastEndLine = chunk.endLine;
+        }
+
+        return mergedContent.trim();
     }
 
     /**
@@ -695,13 +763,20 @@ export class Context {
  * @param onFileProcessed Callback called when each file is processed
  * @returns Object with processed file count and total chunk count
  */
+    /**
+     * Process a list of files with streaming chunk processing
+     * @param filePaths Array of file paths to process
+     * @param codebasePath Base path for the codebase
+     * @param onFileProcessed Callback called when each file is processed
+     * @returns Object with processed file count and total chunk count
+     */
     private async processFileList(
         filePaths: string[],
         codebasePath: string,
         onFileProcessed?: (filePath: string, fileIndex: number, totalFiles: number) => void
     ): Promise<{ processedFiles: number; totalChunks: number; status: 'completed' | 'limit_reached' }> {
         const isHybrid = this.getIsHybrid();
-        const EMBEDDING_BATCH_SIZE = Math.max(1, parseInt(envManager.get('EMBEDDING_BATCH_SIZE') || '100', 10));
+        const EMBEDDING_BATCH_SIZE = Math.max(1, parseInt(envManager.get('EMBEDDING_BATCH_SIZE') || '50', 10)); // Reduced default batch size for better reliability
         const CHUNK_LIMIT = 450000;
         console.log(`[Context] 🔧 Using EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE}`);
 
@@ -709,6 +784,7 @@ export class Context {
         let processedFiles = 0;
         let totalChunks = 0;
         let limitReached = false;
+        let failedChunks = 0;
 
         for (let i = 0; i < filePaths.length; i++) {
             const filePath = filePaths[i];
@@ -733,15 +809,15 @@ export class Context {
                     // Process batch when buffer reaches EMBEDDING_BATCH_SIZE
                     if (chunkBuffer.length >= EMBEDDING_BATCH_SIZE) {
                         try {
-                            await this.processChunkBuffer(chunkBuffer);
+                            await this.processChunkBufferWithRetry(chunkBuffer);
                         } catch (error) {
                             const searchType = isHybrid === true ? 'hybrid' : 'regular';
-                            console.error(`[Context] ❌ Failed to process chunk batch for ${searchType}:`, error);
-                            if (error instanceof Error) {
-                                console.error('[Context] Stack trace:', error.stack);
-                            }
+                            console.error(`[Context] ❌ Failed to process chunk batch for ${searchType} after retries:`, error);
+                            failedChunks += chunkBuffer.length;
+                            // We don't clear buffer here immediately to allow potential recovery strategies, 
+                            // but for now we proceed to avoid blocking the whole indexing.
                         } finally {
-                            chunkBuffer = []; // Always clear buffer, even on failure
+                            chunkBuffer = []; // Clear buffer for next batch
                         }
                     }
 
@@ -770,20 +846,77 @@ export class Context {
             const searchType = isHybrid === true ? 'hybrid' : 'regular';
             console.log(`📝 Processing final batch of ${chunkBuffer.length} chunks for ${searchType}`);
             try {
-                await this.processChunkBuffer(chunkBuffer);
+                await this.processChunkBufferWithRetry(chunkBuffer);
             } catch (error) {
                 console.error(`[Context] ❌ Failed to process final chunk batch for ${searchType}:`, error);
-                if (error instanceof Error) {
-                    console.error('[Context] Stack trace:', error.stack);
-                }
+                failedChunks += chunkBuffer.length;
             }
+        }
+
+        if (failedChunks > 0) {
+            console.error(`[Context] ❌ Total failed chunks: ${failedChunks} out of ${totalChunks}`);
         }
 
         return {
             processedFiles,
-            totalChunks,
+            totalChunks: totalChunks - failedChunks, // Only count successfully indexed chunks
             status: limitReached ? 'limit_reached' : 'completed'
         };
+    }
+
+    /**
+     * Process chunk buffer with retry logic
+     */
+    private async processChunkBufferWithRetry(chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }>): Promise<void> {
+        // If it's a small batch (1 item), no need for complex retry logic
+        if (chunkBuffer.length <= 1) {
+            try {
+                await this.processChunkBuffer(chunkBuffer);
+            } catch (error) {
+                console.error(`[Context] ❌ Failed to insert single chunk:`, error instanceof Error ? error.message : String(error));
+                throw error; // Rethrow to count as failure
+            }
+            return;
+        }
+
+        try {
+            // First attempt: try the whole batch
+            await this.processChunkBuffer(chunkBuffer);
+        } catch (error) {
+            console.warn(`[Context] ⚠️  Batch insertion failed. Falling back to sequential processing immediately.`);
+
+            // If batch fails, don't blindly retry the whole batch - it likely contains a bad apple or constraint violation
+            // Fallback immediately to sequential processing to isolate the failure
+            await this.processChunksSequentially(chunkBuffer);
+        }
+    }
+
+    /**
+     * Fallback: Process chunks one by one to isolate problematic chunks
+     */
+    private async processChunksSequentially(chunkBuffer: Array<{ chunk: CodeChunk; codebasePath: string }>): Promise<void> {
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const item of chunkBuffer) {
+            try {
+                await this.processChunkBuffer([item]);
+                successCount++;
+            } catch (error) {
+                failCount++;
+                // Check if relativePath exists in metadata, otherwise use a fallback
+                const filePath = item.chunk.metadata.filePath;
+                const relativePath = filePath ? path.relative(item.codebasePath, filePath) : 'unknown';
+
+                console.error(`[Context] ❌ Failed to insert single chunk (file: ${relativePath}):`, error instanceof Error ? error.message : String(error));
+            }
+        }
+
+        console.log(`[Context] ℹ️  Sequential fallback complete: ${successCount} succeeded, ${failCount} failed`);
+
+        if (failCount === chunkBuffer.length && failCount > 0) {
+            throw new Error(`All ${failCount} chunks failed during sequential implementation fallback.`);
+        }
     }
 
     /**

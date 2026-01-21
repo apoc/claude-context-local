@@ -9,7 +9,7 @@
         "claude-context-local-mcp": "dist/index-postgres.js"
     },
     "scripts": {
-        "build": "pnpm clean && tsc --build --force && chmod +x dist/index-postgres.js",
+        "build": "pnpm clean && tsc --build --force",
         "dev": "tsx --watch src/index.ts",
         "clean": "rimraf dist",
         "lint": "eslint src --ext .ts",
